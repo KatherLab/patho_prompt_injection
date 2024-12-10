@@ -1,0 +1,1356 @@
+---
+title: "Patho Label Assessment"
+output: html_document
+date: "2024-10-21"
+---
+
+# Libraries
+```{r}
+library(ggplot2)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(FSA)
+library(rstatix)
+library(scales)
+library(RColorBrewer)
+library(openxlsx)
+options(scipen = 999)
+library(svglite)
+library(networkD3)
+library(dplyr)
+library(htmlwidgets)
+library(webshot2)
+library(rsvg)
+Sys.setenv(CHROMOTE_CHROME="C:/Users/janni/AppData/Local/Google/Chrome/Application/chrome.exe")
+```
+
+```{r}
+# installed_packages <- installed.packages()
+# package_list <- c("ggplot2", "readxl", "dplyr", "tidyr", "gridExtra", "FSA", "rstatix", "scales", "RColorBrewer", "openxlsx", "svglite")
+# 
+# for (package in package_list) {
+#   version <- installed_packages[package, "Version"]
+#   if (!is.na(version)) {
+#     cat(sprintf("%s==%s\n", package, version))
+#   } else {
+#     cat(sprintf("%s not found\n", package))
+#   }
+# }
+```
+
+
+# Loading data
+```{r}
+data <- read_excel("C:/Users/janni/OneDrive/Dokumente/PostDoc/Projects/Patho Prompt Injection/Data/combined_analysis_results.xlsx")
+
+
+
+data <- data %>%
+  rowwise() %>%
+  mutate(
+    Label_Type = case_when(
+      Label_Type == "false" ~ "Misleading \nLabel",
+      Label_Type == "none" ~ "No Label",
+      Label_Type == "true" ~ "True Label",
+      TRUE ~ Label_Type), # keeps any other values unchanged)
+    Project_Part = case_when(
+      Project_Part == "LKN" ~ "Lymph node infiltration",
+      Project_Part == "Molecular_Status" ~ "Mutational Status",
+      TRUE ~ Project_Part
+    )
+  )
+
+
+
+data_long <- data %>%
+  pivot_longer(
+    cols = c(starts_with("score_"), starts_with("diag_"), starts_with("flag_"), starts_with("distance_")),
+    names_to = c(".value", "set"),
+    names_pattern = "(.+)_(\\d+)$"
+  ) %>%
+  mutate(
+    score = as.numeric(score),
+    distance = as.numeric(distance),
+    flag = as.numeric(flag),
+    set = as.numeric(set)
+  ) %>%
+  arrange(Patient_ID_File_Name, model_name, Project_Part, Label_Type, set)
+
+data <- data %>%
+  rowwise() %>%
+  mutate(
+    score_mean = mean(c(score_1, score_2, score_3), na.rm = TRUE),
+    distance_mean = mean(c(distance_1, distance_2, distance_3), na.rm = TRUE),
+    flag_mean = mean(c(flag_1, flag_2, flag_3), na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+
+
+
+
+data_wm <- read_excel("C:/Users/janni/OneDrive/Dokumente/PostDoc/Projects/Patho Prompt Injection/Data/combined_analysis_results_watermark.xlsx")
+
+data_wm <- data_wm %>%
+  rowwise() %>%
+  mutate(
+    Label_Type = case_when(
+      Label_Type == "false" ~ "Misleading \nWatermark",
+      Label_Type == "none" ~ "No Watermark",
+      Label_Type == "true" ~ "Watermark leaks \nground truth",
+      TRUE ~ Label_Type)) # keeps any other values unchanged)
+
+data_long_wm <- data_wm %>%
+  pivot_longer(
+    cols = c(starts_with("score_"), starts_with("diag_"), starts_with("flag_")),
+    names_to = c(".value", "set"),
+    names_pattern = "(.+)_(\\d+)$"
+  ) %>%
+  mutate(
+    score = as.numeric(score),
+    set = as.numeric(set)
+  ) %>%
+  arrange(Patient_ID_File_Name, model_name, Project_Part, Label_Type, set)
+
+
+data_wm <- data_wm %>%
+  rowwise() %>%
+  mutate(
+    score_mean = mean(c(score_1, score_2, score_3), na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+data_eng <- read_excel("C:/Users/janni/OneDrive/Dokumente/PostDoc/Projects/Patho Prompt Injection/Data/combined_analysis_results_engineered.xlsx")
+
+
+
+data_long_eng <- data_eng %>%
+  pivot_longer(
+    cols = c(starts_with("score_"), starts_with("diag_")),
+    names_to = c(".value", "set"),
+    names_pattern = "(.+)_(\\d+)$"
+  ) %>%
+  mutate(
+    score = as.numeric(score),
+    set = as.numeric(set)
+  ) %>%
+  arrange(Patient_ID_File_Name, model_name, Project_Part, Label_Type, set)
+
+
+data_eng <- data_eng %>%
+  rowwise() %>%
+  mutate(
+    score_mean = mean(c(score_1, score_2, score_3), na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+#Merge dataframes for figure 4 (prompt engineering vs no prompt engineering)
+
+data_long_temp <- data_long %>%
+  select(c("Project_Part", "Label_Type", "model_name", "score"))
+data_long_temp$Prompt_Engineering <- 0 #Add this column as this is w/o engineering
+  
+
+data_long_wm_temp <- data_long_wm %>%
+  select(c("Project_Part", "Label_Type", "model_name", "score"))
+data_long_wm_temp$Prompt_Engineering <- 0 #Add this column as this is w/o engineering
+
+data_long_eng_temp <- data_long_eng %>%
+  select(c("Project_Part", "Label_Type", "model_name", "score", "Prompt_Engineering"))
+
+
+
+data_fig4 <- rbind(data_long_temp, data_long_eng_temp, data_long_wm_temp)
+
+
+data_fig4 <- data_fig4 %>%
+  rowwise() %>%
+  mutate(
+    Label_Type = case_when(
+      Label_Type == "Misleading \nWatermark" ~ "Misleading Label",
+      Label_Type == "Misleading \nLabel" ~ "Misleading Label",
+      Label_Type == "false" ~ "Misleading Label",
+      Label_Type == "none" ~ "No Label",
+      Label_Type == "No Watermark" ~ "No Label",
+      Label_Type == "true" ~ "True Label",
+      Label_Type == "Watermark leaks \nground truth" ~ "True Label",
+      TRUE ~ Label_Type),
+    Prompt_Engineering = case_when(
+      Prompt_Engineering == 0 ~ "Native Prompt",
+      Prompt_Engineering == 1 ~ "Attention on tissue"
+    )) # keeps any other values unchanged)
+
+
+# Order prompt engineering via factor
+pe_order <- c("Native Prompt", "Attention on tissue")
+data_fig4$Prompt_Engineering <- factor(data_fig4$Prompt_Engineering, levels = pe_order)
+
+
+
+
+# Define variables for figures and tables
+models_to_include_1 <- c("GPT-4o", "Claude-3", "Claude-3.5")
+models_to_include_2 <- c("GPT-4o", "Claude-3", "Claude-3.5", "Reka Core")
+
+label_size <- 20
+fig_path <- "C:/Users/janni/OneDrive/Dokumente/PostDoc/Projects/Patho Prompt Injection/Figures/"
+suppl_path <- "C:/Users/janni/OneDrive/Dokumente/PostDoc/Projects/Patho Prompt Injection/Supplementary_Material_1.xlsx"
+
+```
+
+#Define Export summary statistics/Color Scheme
+```{r}
+export_stats_to_excel <- function(excel_file, sheet_name, summary_stats, p_values, project_part=NA, overwrite_sheet = TRUE) {
+  wb <- loadWorkbook(excel_file)
+  # Check if the sheet exists and handle according to overwrite_sheet parameter
+  # Automatically calculate and add the number of data points (n) to summary_stats
+  total_queries <- sum(summary_stats$n)
+  
+  if (sheet_name %in% names(wb)) {
+    if (overwrite_sheet) {
+      removeWorksheet(wb, sheet_name)
+      addWorksheet(wb, sheet_name)
+    } else {
+      stop(paste("Sheet", sheet_name, "already exists and overwrite_sheet is set to FALSE"))
+    }
+  } else {
+    addWorksheet(wb, sheet_name)
+  }
+  
+  # Write summary statistics
+  writeData(wb, sheet_name, x = paste("Summary statistics for Project Part:", project_part), startRow = 1, startCol = 1)
+  writeData(wb, sheet_name, summary_stats, startRow = 2, startCol = 1)
+  
+  #Write total n number
+  total_row <- nrow(summary_stats) + 4
+  writeData(wb, sheet_name, x = paste("Total number of individual queries =", total_queries), startRow = total_row, startCol = 1)
+  
+  
+  # Write p-values
+  start_row <- total_row + 2
+  for (i in seq_along(p_values)) {
+    writeData(wb, sheet_name, names(p_values)[i], startRow = start_row, startCol = 1)
+    p_value_data <- p_values[[i]]
+    if (is.data.frame(p_value_data)) {
+      writeDataTable(wb, sheet_name, p_value_data, startRow = start_row + 1, startCol = 1)
+      start_row <- start_row + nrow(p_value_data) + 3
+    } else {
+      writeData(wb, sheet_name, capture.output(print(p_value_data)), startRow = start_row + 1, startCol = 1)
+      start_row <- start_row + length(capture.output(print(p_value_data))) + 2
+    }
+  }
+  
+  # Save the workbook
+  saveWorkbook(wb, excel_file, overwrite = TRUE)
+  
+  print(paste("Data has been exported to", sheet_name, "in the Excel file."))
+}
+```
+
+#Define theme for visuals
+```{r}
+custom_theme <- theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(size = 10, colour = "black", angle = 45, hjust = 1, vjust = 1),
+    axis.text.y = element_text(size = 10, colour = "black"),
+    axis.title.y = element_text(size = 10, vjust = 2),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    plot.margin = margin(1, 1, 2, 0.5, "cm")
+  )
+
+custom_colors_1 <- c("#22628F", "#20B38E", "#CC9439", "#BD672A")
+custom_colors <- c("#999999", "#20B38E", "#CC9439", "#BD672A")
+custom_colors_2 <- c("#20B38E", "#CC9439", "#BD672A")
+
+```
+
+
+# Figure 2 Accuracy all tasks combined
+
+```{r}
+# Calculate summary statistics for Figure 2 (b)
+summary_stats_2a <- data %>%
+  group_by(model_name, Label_Type) %>%
+  summarize(
+    mean = mean(score_mean, na.rm = TRUE),
+    sd = sd(score_mean, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Merge summary statistics back to the original data for plotting
+data_2a <- data %>%
+  left_join(summary_stats_2a, by = c("model_name", "Label_Type")) 
+
+
+dot_counts <- data_2a %>%
+  group_by(model_name) %>%
+  summarize(dot_count = n())
+
+# Print the number of dots per Model
+print("Number of dots per Model:")
+print(dot_counts)
+
+label_size <- 18
+
+
+custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138")
+custom_theme <- theme_minimal() +
+    theme(
+      text = element_text(size = label_size),
+      plot.title = element_text(size = label_size + 2),
+      axis.text = element_text(size = label_size, color = "black"),
+      axis.title = element_text(size = label_size),
+      legend.text = element_text(size = label_size),
+      panel.grid.minor = element_blank()
+    )
+
+
+plot_2a <- ggplot(data_2a, aes(x = Label_Type, y = mean, fill = model_name)) +
+      geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+      geom_errorbar(aes(ymin = pmax(mean - sd, 0), ymax = pmin(mean + sd, 1)), 
+                    width = 0, size = 0.5, color = "black", 
+                    position = position_dodge(width = 0.8)) +
+      geom_jitter(data = data_2a, aes(y = !!sym("score_mean"), group = model_name), 
+                  position = position_jitterdodge(dodge.width = 0.8, 
+                                                jitter.width = 0.15, 
+                                                jitter.height = 0.025),
+                  size = 1, alpha = 0.4, stroke = 0.3) +
+      labs(y = "Accuracy",
+           title = "All tasks") +
+      theme_minimal() +
+      custom_theme + 
+      theme(
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = label_size, colour = "black", 
+                                 angle = 45, vjust = 1, hjust = 1),
+        axis.text.y = element_text(size = label_size, colour = "black"),
+        axis.title.y = element_text(size = label_size, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = label_size),
+        legend.position = "top",
+        legend.direction = "horizontal",
+        legend.justification = "center",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+        plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm")
+      ) +
+      scale_fill_manual(values = custom_colors) +
+      scale_y_continuous(limits = c(-0.05, 1.05), expand = c(0, 0)) +
+      scale_x_discrete(expand = expansion(add = 0.7)) +
+      coord_fixed(ratio = 3.6 / 1)
+
+ggsave(filename = paste0(fig_path, "Accuracy_all_tasks.svg"), plot = plot_2a, width = 6, height = 6, bg = "transparent")
+
+```
+
+
+
+
+
+
+
+```{r}
+create_project_plot <- function(data, 
+                              metric = "score_mean",  # Options: "score_mean", "distance_mean", "flag_mean"
+                              y_label = "Accuracy",
+                              custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+                              fig_path = "figures/",
+                              label_size = 12) {
+  
+  # Define custom theme if not already defined
+  custom_theme <- theme_minimal() +
+    theme(
+      text = element_text(size = label_size),
+      plot.title = element_text(size = label_size + 2),
+      axis.text = element_text(size = label_size, color = "black"),
+      axis.title = element_text(size = label_size),
+      legend.text = element_text(size = label_size),
+      panel.grid.minor = element_blank()
+    )
+  
+  # Calculate summary statistics for each project part
+  summary_stats <- data %>%
+    group_by(model_name, Label_Type, Project_Part) %>%
+    summarize(
+      mean = mean(!!sym(metric), na.rm = TRUE),
+      sd = sd(!!sym(metric), na.rm = TRUE),
+      .groups = 'drop'
+    )
+  
+  # Get unique project parts
+  project_parts <- unique(data$Project_Part)
+  
+  # Create a plot for each project part
+  plots <- lapply(project_parts, function(part) {
+    # Filter data for current project part
+    data_subset <- data %>% filter(Project_Part == part)
+    stats_subset <- summary_stats %>% filter(Project_Part == part)
+    
+    # Create plot
+    p <- ggplot(stats_subset, aes(x = Label_Type, y = mean, fill = model_name)) +
+      geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+      geom_errorbar(aes(ymin = pmax(mean - sd, 0), ymax = pmin(mean + sd, 1)), 
+                    width = 0, size = 0.5, color = "black", 
+                    position = position_dodge(width = 0.8)) +
+      geom_jitter(data = data_subset, aes(y = !!sym(metric), group = model_name), 
+                  position = position_jitterdodge(dodge.width = 0.8, 
+                                                jitter.width = 0.15, 
+                                                jitter.height = 0.025),
+                  size = 1, alpha = 0.4, stroke = 0.3) +
+      labs(y = y_label,
+           title = part) +
+      theme_minimal() +
+      custom_theme + 
+      theme(
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = label_size, colour = "black", 
+                                 angle = 45, vjust = 1, hjust = 1),
+        axis.text.y = element_text(size = label_size, colour = "black"),
+        axis.title.y = element_text(size = label_size, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = label_size),
+        legend.position = "top",
+        legend.direction = "horizontal",
+        legend.justification = "center",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+        plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm")
+      ) +
+      scale_fill_manual(values = custom_colors) +
+      scale_y_continuous(limits = c(-0.05, 1.05), expand = c(0, 0)) +
+      scale_x_discrete(expand = expansion(add = 0.7)) +
+      coord_fixed(ratio = 3.2 / 1)
+    
+    # Save the plot
+    metric_name <- gsub("_mean", "", metric)  # Remove '_mean' from metric name
+    filename <- paste0(fig_path, 
+                      metric_name, "_", 
+                      gsub("-", "_", part),  # Replace hyphens with underscores
+                      "_plot.svg")
+    ggsave(filename = filename, plot = p, width = 12, height = 6, 
+           bg = "transparent")
+    
+    return(p)
+  })
+  
+  # Name the plots list with project parts
+  names(plots) <- project_parts
+  
+  return(plots)
+}
+```
+
+```{r}
+plots <- create_project_plot(
+  data = data,
+  metric = "score_mean",  # or "distance_mean" or "flag_mean"
+  y_label = "Accuracy",
+  custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+  fig_path = fig_path,
+  label_size = 18
+)
+```
+
+
+```{r}
+plots <- create_project_plot(
+  data = data,
+  metric = "flag_mean",  # or "distance_mean" or "flag_mean"
+  y_label = "Flagged as suspicious",
+  custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+  fig_path = fig_path,
+  label_size = 18
+)
+```
+
+
+```{r}
+plots <- create_project_plot(
+  data = data,
+  metric = "distance_mean",  # or "distance_mean" or "flag_mean"
+  y_label = "Distance from truth",
+  custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+  fig_path = fig_path,
+  label_size = 18
+)
+```
+
+
+# Figure 3: Watermarks
+```{r}
+fig_path
+
+plots <- create_project_plot(
+  data = data_wm,
+  metric = "score_mean",  # or "distance_mean" or "flag_mean"
+  y_label = "Accuracy",
+  custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+  fig_path = paste0(fig_path, "Watermark"),
+  label_size = 16
+)
+```
+
+
+
+```{r}
+data_prostate <- data_wm[data_wm$True_Prompt=="Prostate", ]
+
+plots <- create_project_plot(
+  data = data_prostate,
+  metric = "score_mean",  # or "distance_mean" or "flag_mean"
+  y_label = "Accuracy",
+  custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+  fig_path = paste0(fig_path, "Watermark_Prostate"),
+  label_size = 16
+)
+```
+
+```{r}
+data_ovary <- data_wm[data_wm$True_Prompt=="Ovary", ]
+
+plots <- create_project_plot(
+  data = data_ovary,
+  metric = "score_mean",  # or "distance_mean" or "flag_mean"
+  y_label = "Accuracy",
+  custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+  fig_path = paste0(fig_path, "Watermark_Ovary"),
+  label_size = 16
+)
+```
+
+
+
+# FIgure 3 Sankey Plot Function
+
+```{r}
+
+data_sankey <- data_long_wm %>%
+  mutate(Label_Type = gsub("\n", " ", Label_Type))
+
+
+create_sankey <- function(df, fig_path, width, height, organ = NULL, model = NULL) {
+  # Create title based on parameters
+  title <- if(!is.null(model)) {
+    paste0(organ, " - ", model)
+  } else {
+    paste0(organ, " - All Models")
+  }
+
+  # Create the long format data for Sankey diagram
+  data_long <- df %>%
+    filter(!is.na(diag), !is.na(set)) %>%
+    group_by(Label_Type, diag) %>%
+    summarise(value = n(), .groups = 'drop')
+
+  # Create nodes dataframe
+  nodes <- data.frame(
+    name = c(as.character(unique(data_long$Label_Type)), 
+             as.character(unique(data_long$diag))) %>% 
+    unique()
+  )
+
+  # Match IDs
+  data_long$IDsource <- match(data_long$Label_Type, nodes$name) - 1
+  data_long$IDtarget <- match(data_long$diag, nodes$name) - 1
+
+  # Create color scale
+  # ColourScal <- 'd3.scaleOrdinal() .range(["#FDE725FF","#B4DE2CFF","#6DCD59FF","#35B779FF","#1F9E89FF","#26828EFF","#31688EFF","#3E4A89FF"])'
+  ColourScal <- 'd3.scaleOrdinal()
+    .domain(["Misleading Watermark", "No Watermark", "Watermark leaks ground truth", 
+             "Prostate", "Colorectal", "Ovary", "Breast", "Lung"])
+    .range(["#BD5138", "#999999", "#20B38E", 
+            "#7E1918", "#00AEEF", "#D97D25", "#ED2891", "#542C88"])'
+
+  # Create Sankey diagram
+  p <- sankeyNetwork(Links = data_long, 
+                    Nodes = nodes,
+                    Source = "IDsource", 
+                    Target = "IDtarget",
+                    Value = "value", 
+                    NodeID = "name",
+                    sinksRight=TRUE, 
+                    colourScale=ColourScal, 
+                    nodeWidth=13, 
+                    fontSize=12, 
+                    fontFamily="Arial",
+                    nodePadding=6,
+                    width=width,
+                    height=height)
+
+   # Create filenames for both HTML and SVG
+  # Create filenames
+  html_filename <- paste0(fig_path, organ, "", if(!is.null(model)) paste0(gsub("-", "", model), ""), "sankey.html")
+  saveWidget(p, html_filename, selfcontained = TRUE)
+
+  pdf_filename <- gsub(".html", ".pdf", html_filename)
+  webshot2::webshot(
+    url = html_filename,
+    file = pdf_filename,
+    vwidth = width,
+    vheight = height,
+    zoom = 1,
+    selector= "body",
+  )
+  return(pdf_filename)
+  }
+# Example usage: 
+## Note: HTML to PDF conversion works only when Chrome and Adobe REader are closed
+
+```
+
+### Run Sankey Plots
+```{r}
+df_ovary <- data_sankey %>%
+  filter(Class_Ground_Truth == "Ovary")
+result <- create_sankey(df_ovary, fig_path = fig_path, width=250, height=200, organ = "Ovary")
+
+
+df_prostate <- data_long_wm %>%
+  filter(Class_Ground_Truth == "Prostate")
+create_sankey(df_prostate, fig_path = fig_path, width=250, height=200, organ = "Prostate")
+
+```
+
+```{r}
+# # For separate models
+# df_ovary_claude3 <- data_long_wm %>%
+#   filter(Class_Ground_Truth == "Ovary",
+#          model_name == "Claude-3")
+# create_sankey(df_ovary_claude3, fig_path = fig_path, 
+#              organ = "Ovary", model = "Claude-3")
+
+for (model in models_to_include_1) {
+  # For Ovary
+  df_ovary_model <- data_long_wm %>%
+  filter(Class_Ground_Truth == "Ovary",
+         model_name == model)
+  create_sankey(df_ovary_model, fig_path = fig_path, width=250, height=200,
+             organ = "Ovary", model = model)
+
+  #For prostate
+  df_prostate_model <- data_long_wm %>%
+  filter(Class_Ground_Truth == "Prostate",
+         model_name == model)
+  create_sankey(df_prostate_model, fig_path = fig_path, width=250, height=200,
+             organ = "Prostate", model = model)
+
+
+
+}
+
+
+
+```
+
+
+
+
+# Figure 4: prompt Engineering
+
+
+
+
+```{r}
+create_mitigation_plot <- function(data, 
+                              metric = "score_mean",  # Options: "score_mean", "distance_mean", "flag_mean"
+                              y_label = "Accuracy",
+                              custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+                              fig_path = "figures/",
+                              label_size = 12,
+                              name= "Mitigation",
+                              legend_position= "none") {
+  
+  # Define custom theme if not already defined
+  custom_theme <- theme_minimal() +
+    theme(
+      text = element_text(size = label_size),
+      plot.title = element_text(size = label_size + 2, face = "bold"),
+      axis.text = element_text(size = label_size, color = "black"),
+      axis.title = element_text(size = label_size),
+      legend.text = element_text(size = label_size),
+      panel.grid.minor = element_blank()
+    )
+  
+  # Calculate summary statistics for each 
+  summary_stats <- data %>%
+    group_by(model_name, Label_Type, Prompt_Engineering) %>%
+    summarize(
+      mean = mean(!!sym(metric), na.rm = TRUE),
+      sd = sd(!!sym(metric), na.rm = TRUE),
+      .groups = 'drop'
+    )
+  
+  # Get unique project parts
+  project_parts <- unique(data$Label_Type)
+  print(project_parts)
+  
+  # Create a plot for each project part
+  plots <- lapply(project_parts, function(part) {
+    # Filter data for current project part
+    data_subset <- data %>% filter(Label_Type == part)
+    stats_subset <- summary_stats %>% filter(Label_Type == part)
+    
+    # Create plot
+    p <- ggplot(stats_subset, aes(x = Prompt_Engineering, y = mean, fill = model_name)) +
+      geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+      geom_errorbar(aes(ymin = pmax(mean - sd, 0), ymax = pmin(mean + sd, 1)), 
+                    width = 0, size = 0.5, color = "black", 
+                    position = position_dodge(width = 0.8)) +
+      geom_jitter(data = data_subset, aes(y = !!sym(metric), group = model_name), 
+                  position = position_jitterdodge(dodge.width = 0.8, 
+                                                jitter.width = 0.15, 
+                                                jitter.height = 0.025),
+                  size = 1, alpha = 0.4, stroke = 0.3) +
+      labs(y = y_label,
+           title = part) +
+      theme_minimal() +
+      custom_theme + 
+      theme(
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = label_size, colour = "black", 
+                                 angle = 45, vjust = 1, hjust = 1),
+        axis.text.y = element_text(size = label_size, colour = "black"),
+        axis.title.y = element_text(size = label_size, vjust = 2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = label_size),
+        legend.position = legend_position,
+        legend.direction = "horizontal",
+        legend.justification = "center",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+        plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm")
+      ) +
+      scale_fill_manual(values = custom_colors) +
+      scale_y_continuous(limits = c(-0.05, 1.05), expand = c(0, 0)) +
+      scale_x_discrete(expand = expansion(add = 0.7)) +
+      coord_fixed(ratio = 3.2 / 1)
+    
+    # Save the plot
+    
+    filename <- paste0(fig_path, name, "_", part, "_plot.svg")
+    ggsave(filename = filename, plot = p, width = 12, height = 6, 
+           bg = "transparent")
+    
+    return(p)
+  })
+  
+  # Name the plots list with project parts
+  names(plots) <- project_parts
+  
+  return(plots)
+}
+```
+
+```{r}
+
+plots <- create_mitigation_plot(
+  data = data_fig4,
+  metric = "score",  # or "distance_mean" or "flag_mean"
+  y_label = "Accuracy",
+  custom_colors = c("#22628F", "#20B38E", "#CC9439", "#BD5138"),
+  fig_path = paste0(fig_path, "prompt_engineering"),
+  label_size = 16
+)
+```
+
+# Stats Fig 2a over all models:
+
+```{r}
+summary_figure_2a <- data_long %>%
+  group_by(Label_Type, Project_Part) %>%
+  summarize(
+    mean_accuracy=mean(score, na.rm = TRUE),
+    sd_accuracy  =  sd(score, na.rm = TRUE),
+    n             = n()
+  )
+
+print(summary_figure_2a)
+
+
+# Create a named list of p-values
+p_values_list <- list()
+
+# Use the function
+export_stats_to_excel(
+  excel_file = suppl_path,
+  sheet_name = "ST3 Stats Figure 2 combined",
+  summary_stats = summary_figure_2a,
+  p_values = p_values_list
+  
+)
+```
+
+
+
+# Stats Fig 2a:
+
+```{r}
+summary_figure_2a <- data_long %>%
+  group_by(Label_Type, model_name) %>%
+  summarize(
+    mean_accuracy=mean(score, na.rm = TRUE),
+    sd_accuracy  =  sd(score, na.rm = TRUE),
+    n             = n()
+  )
+
+print(summary_figure_2a)
+
+
+figure_2a_test <- kruskal.test(score ~ Label_Type, data = data_long )
+figure_2a_test$p.value <- round(figure_2a_test$p.value, 5)
+print(figure_2a_test)
+
+# Post-hoc analysis using Dunn test if Kruskal-Wallis test is significant
+
+dunn_test <- dunnTest(score ~ Label_Type, data = data_long, method = "bonferroni")
+dunn_test$res$P.adj <- round(dunn_test$res$P.adj, 5)
+print(dunn_test)
+
+
+# Create a named list of p-values
+p_values_list <- list(
+  "Kruskal-Wallis Test" = figure_2a_test,
+  "Dunn Test" = dunn_test$res
+)
+
+# Use the function
+export_stats_to_excel(
+  excel_file = suppl_path,
+  sheet_name = "ST4 Statistics Figure 2a",
+  summary_stats = summary_figure_2a,
+  p_values = p_values_list
+)
+```
+
+# Stats Fig 2c-e:
+
+```{r}
+
+# Dictionary for project parts and figure legends
+figure_legend_map <- list(
+  "T-Stage" = "2c",
+  "Lymph node infiltration" = "2d",
+  "Mutational Status" = "2e"
+)
+
+# List of unique project parts
+project_parts <- names(figure_legend_map)
+
+# Loop through each project part
+for (i in seq_along(project_parts)) {
+  project_part <- project_parts[i]
+  figure_legend <- figure_legend_map[[project_part]] # Get the corresponding figure legend
+  
+  # Filter data for the current project part
+  subset_data <- data_long %>% filter(Project_Part == project_part)
+  
+  # Summary statistics
+  summary_figure_2a <- subset_data %>%
+    group_by(Label_Type, model_name) %>%
+    summarize(
+      mean_accuracy = mean(score, na.rm = TRUE),
+      sd_accuracy   = sd(score, na.rm = TRUE),
+      n             = n()
+    )
+  
+  print(summary_figure_2a)
+  
+  # Kruskal-Wallis test
+  figure_2a_test <- kruskal.test(score ~ Label_Type, data = subset_data)
+  figure_2a_test$p.value <- round(figure_2a_test$p.value, 5)
+  print(figure_2a_test)
+  
+  # Post-hoc Dunn test
+  dunn_test <- dunnTest(score ~ Label_Type, data = subset_data, method = "bonferroni")
+  dunn_test$res$P.adj <- round(dunn_test$res$P.adj, 5)
+
+  print(dunn_test)
+  
+  # Create a named list of p-values
+  p_values_list <- list(
+    "Kruskal-Wallis Test" = figure_2a_test,
+    "Dunn Test" = dunn_test$res
+  )
+  
+  # Export results to an Excel file with distinct sheet names
+  export_stats_to_excel(
+    excel_file = suppl_path,
+    sheet_name = paste0("ST ", 4 + i, " Figure " ,figure_legend, " Score"), # Dynamically name sheets using figure legend
+    summary_stats = summary_figure_2a,
+    p_values = p_values_list,
+    project_part = project_part
+  )
+}
+
+
+```
+# Stats Fig 2f-h:
+
+```{r}
+# Dictionary for project parts and figure legends
+figure_legend_map <- list(
+  "T-Stage" = "2c",
+  "Lymph node infiltration" = "2d",
+  "Mutational Status" = "2e"
+)
+
+# List of unique project parts
+project_parts <- names(figure_legend_map)
+
+# Loop through each project part
+for (i in seq_along(project_parts)) {
+  project_part <- project_parts[i]
+  figure_legend <- figure_legend_map[[project_part]] # Get the corresponding figure legend
+  
+  # Filter data for the current project part
+  subset_data <- data_long %>% filter(Project_Part == project_part)
+  
+  # Summary statistics
+  summary_figure_2a <- subset_data %>%
+    group_by(Label_Type, model_name) %>%
+    summarize(
+      mean_accuracy = mean(flag, na.rm = TRUE),
+      sd_accuracy   = sd(flag, na.rm = TRUE),
+      n             = n()
+    )
+  
+  print(summary_figure_2a)
+  
+  # Kruskal-Wallis test
+  figure_2a_test <- kruskal.test(flag ~ Label_Type, data = subset_data)
+  figure_2a_test$p.value <- round(figure_2a_test$p.value, 5)
+  print(figure_2a_test)
+  
+  # Post-hoc Dunn test
+  dunn_test <- dunnTest(flag ~ Label_Type, data = subset_data, method = "bonferroni")
+  dunn_test$res$P.adj <- round(dunn_test$res$P.adj, 5)
+
+  print(dunn_test)
+  
+  # Create a named list of p-values
+  p_values_list <- list(
+    "Kruskal-Wallis Test" = figure_2a_test,
+    "Dunn Test" = dunn_test$res
+  )
+  
+  # Export results to an Excel file with distinct sheet names
+  export_stats_to_excel(
+    excel_file = suppl_path,
+    sheet_name = paste0("ST ", 7 + i, " Figure " ,figure_legend, " Flag "), # Dynamically name sheets using figure legend
+    summary_stats = summary_figure_2a,
+    p_values = p_values_list,
+    project_part = project_part
+  )
+}
+```
+
+
+
+# Stats Fig 3a, c, e:
+
+```{r}
+# Define project part map for Figure 3
+figure_legend_map_3 <- list(
+  "All" = "3a",
+  "Ovary" = "3c",
+  "Prostate" = "3e"
+)
+
+# Define filters for each table
+filters <- list(
+  "All" = NULL,                     # No filter for the first table
+  "Ovary" = "Ovary",                # Filter for Ovary in True_Prompt
+  "Prostate" = "Prostate"           # Filter for Prostate in True_Prompt
+)
+
+# Loop through each project part for Figure 3
+for (i in seq_along(filters)) {
+  filter_name <- names(filters)[i]
+  filter_value <- filters[[filter_name]]
+  figure_legend <- figure_legend_map_3[[filter_name]]
+  
+  # Filter data for the current subset
+  subset_data <- if (is.null(filter_value)) {
+    data_long_wm # No filter for the "All" case
+  } else {
+    data_long_wm %>% filter(True_Prompt == filter_value)
+  }
+  
+  # Project part to be included in the header
+  project_part <- paste("Watermark -", filter_name)
+  
+  # Summary statistics
+  summary_figure_3 <- subset_data %>%
+    group_by(Label_Type, model_name) %>%
+    summarize(
+      mean_accuracy = mean(score, na.rm = TRUE),
+      sd_accuracy   = sd(score, na.rm = TRUE),
+      n             = n()
+    )
+  
+  print(summary_figure_3)
+  
+  # Kruskal-Wallis test
+  figure_3_test <- kruskal.test(score ~ Label_Type, data = subset_data)
+  figure_3_test$p.value <- round(figure_3_test$p.value, 5)
+  print(figure_3_test)
+  
+  # Post-hoc Dunn test
+  dunn_test <- dunnTest(score ~ Label_Type, data = subset_data, method = "bonferroni")
+  dunn_test$res$P.adj <- round(dunn_test$res$P.adj, 5)
+  
+  print(dunn_test)
+  
+  # Create a named list of p-values
+  p_values_list <- list(
+    "Kruskal-Wallis Test" = figure_3_test,
+    "Dunn Test" = dunn_test$res
+  )
+  
+  # Export results to an Excel file
+  export_stats_to_excel(
+    excel_file = suppl_path,
+    sheet_name = paste0("ST ", 10 + i, "Fig ", figure_legend, " Stats"), # Dynamically name sheets using figure legend
+    summary_stats = summary_figure_3,
+    p_values = p_values_list,
+    project_part = project_part  # Include project part in the header
+  )
+}
+
+
+
+```
+# Stats Fig 4
+
+```{r}
+# Dictionary for project parts and figure legends
+figure_legend_map <- list(
+  "Misleading Label" = "4a",
+  "No Label" = "4b",
+  "True Label" = "4c"
+)
+
+# List of unique project parts
+project_parts <- names(figure_legend_map)
+
+# Loop through each project part
+for (i in seq_along(project_parts)) {
+  project_part <- project_parts[i]
+  figure_legend <- figure_legend_map[[project_part]] # Get the corresponding figure legend
+  
+  # Filter data for the current project part
+  subset_data <- data_fig4 %>% filter(Label_Type == project_part)
+  
+  # Summary statistics
+  summary_figure_2a <- subset_data %>%
+    group_by(Prompt_Engineering, model_name) %>%
+    summarize(
+      mean_accuracy = mean(score, na.rm = TRUE),
+      sd_accuracy   = sd(score, na.rm = TRUE),
+      n             = n()
+    )
+  
+  print(summary_figure_2a)
+  
+  # Initialize a list to store test results
+  model_test_results <- list()
+  
+  # Perform group comparisons for each model
+  unique_models <- unique(subset_data$model_name)
+  for (model in unique_models) {
+    model_data <- subset_data %>% filter(model_name == model)
+    
+    # Check if there are at least two groups in Prompt_Engineering
+    if (length(unique(model_data$Prompt_Engineering)) > 1) {
+      # Perform Wilcoxon rank-sum test (non-paired comparison)
+      group_test <- wilcox.test(
+        score ~ Prompt_Engineering,
+        data = model_data,
+        exact = FALSE # Approximation for larger sample sizes
+      )
+      
+      # Save results
+      model_test_results[[model]] <- list(
+        model_name = model,
+        p_value = round(group_test$p.value, 5),
+        test_statistic = group_test$statistic
+      )
+    } else {
+      model_test_results[[model]] <- list(
+        model_name = model,
+        p_value = NA,
+        test_statistic = NA
+      )
+    }
+  }
+  
+  # Convert test results to a data frame for easier reporting
+  model_test_results_df <- do.call(rbind, lapply(model_test_results, as.data.frame))
+  model_test_results_df <- data.frame(model_test_results_df, row.names = NULL)
+  print(model_test_results_df)
+  
+  # Create a named list of p-values
+  p_values_list <- list(
+    "Wilcoxon Rank-Sum Test" = model_test_results_df
+  )
+  
+  project_part <- paste("Prompt_Engineering -", project_part)
+  
+  # Export results to an Excel file with distinct sheet names
+  export_stats_to_excel(
+    excel_file = suppl_path,
+    sheet_name = paste0("ST ", 13 + i, " Figure ", figure_legend, " Score"), # Dynamically name sheets using figure legend
+    summary_stats = summary_figure_2a,
+    p_values = p_values_list,
+    project_part = project_part
+  )
+}
+
+
+```
+
+
+```{r}
+# Combine all data for Prompt Engineering comparison
+summary_figure_combined <- data_fig4 %>%
+  group_by(Prompt_Engineering) %>%
+  summarize(
+    mean_accuracy = mean(score, na.rm = TRUE),
+    sd_accuracy   = sd(score, na.rm = TRUE),
+    n             = n()
+  )
+
+print(summary_figure_combined)
+
+# Kruskal-Wallis test for Prompt Engineering (Yes vs No)
+figure_combined_test <- kruskal.test(score ~ Prompt_Engineering, data = data_fig4)
+figure_combined_test$p.value <- round(figure_combined_test$p.value, 5)
+print(figure_combined_test)
+
+# Post-hoc Dunn test for Prompt Engineering (Yes vs No)
+dunn_combined_test <- dunnTest(score ~ Prompt_Engineering, data = data_fig4, method = "bonferroni")
+dunn_combined_test$res$P.adj <- round(dunn_combined_test$res$P.adj, 5)
+print(dunn_combined_test)
+
+# Create a named list of p-values
+p_values_combined_list <- list(
+  "Kruskal-Wallis Test" = figure_combined_test,
+  "Dunn Test" = dunn_combined_test$res
+)
+
+# Export combined results to an Excel file
+export_stats_to_excel(
+  excel_file = suppl_path,
+  sheet_name = "ST 14 Figure 4d Score",  # Dynamically name the sheet
+  summary_stats = summary_figure_combined,
+  p_values = p_values_combined_list,
+  project_part = "Prompt Eng (Yes vs No)"
+)
+
+```
+
+
+
+
+# _______________________________
+
+# Load Data Fig 1
+```{r}
+# Bibliotheken laden
+library(ggplot2)
+library(patchwork)
+library(ggrepel)
+library(svglite)
+
+fig_path <- "C:/Users/janni/OneDrive/Dokumente/PostDoc/Projects/Patho Prompt Injection/Figures/"
+suppl_path <- "C:/Users/janni/OneDrive/Dokumente/PostDoc/Projects/Patho Prompt Injection/Supplementary_Material_1.xlsx"
+
+
+# Sample data including Total counts
+data <- data.frame(
+  Group = c("COAD-READ", "KIRC", "KIRP", "HCC", "THCA", "BRCA", "OVCA", "UCEC", "PRAD"),
+  Count = c(55, 53, 23, 4, 50, 123, 1, 22, 108),
+  Total = c(462, 519, 301, 264, 516, 1113, 108, 183, 329)
+)
+
+# Calculate the Percentage column
+data$Percentage <- (data$Count / data$Total) * 100
+mean_percentage <- mean(data$Percentage)
+
+# Daten für beide Gruppen (Boxplot 1)
+data2 <- data.frame(
+  Group = rep(c("> 1 marked slide", "Marked slides \n / all slides"), each = 5),
+  Percentage = c(40, 36, 20.43, 20.00, 34.00, 22.00, 15.40, 17.00, 19.21, 17.05)
+)
+
+# Daten für den zweiten Boxplot (Boxplot 2)
+data3 <- data.frame(
+  Group = rep(c("Readable Text", "Marked Regions"), each = 5),
+  Percentage = c(62.10, 59.09, 78.23, 56.12,77.30, 42.9, 53.79, 35.29, 43.88,48.65)
+)
+```
+
+
+
+# Figure 1
+```{r}
+label_size = 14
+
+# --- Scatterplot ---
+plot1 <- ggplot(data, aes(y = Percentage, x = Total)) +
+  geom_point(color = "#E69F00", size = 5) +
+  geom_text_repel(aes(label = paste(Group, sprintf("(%.1f%%)", Percentage))), 
+                  size = 3, box.padding = 1.5, point.padding = 0,
+                  nudge_x = 0, nudge_y = 2.5, segment.size=0.25, force=3, max.overlaps = Inf) +
+  labs(y = "Slides with marks [%]", x = "Total slides") +
+  theme_minimal() +
+  theme(
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    legend.position = "none", 
+    plot.title = element_blank(),
+    axis.text.x = element_text(size = label_size, colour = "black"),
+    axis.text.y = element_text(size = label_size, colour = "black"),
+    axis.title.x = element_text(size=label_size, vjust = 1, colour = "black"),
+    axis.title.y = element_text(size= label_size, colour = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank()
+  )
+
+label_size = 11.5
+
+# --- Boxplot 1 ---
+plot2 <- ggplot(data2, aes(x = Group, y = Percentage, fill = Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7, width = 0.5) + # Boxplot schmal beibehalten
+  geom_jitter(aes(color = Group), width = 0.2, size = 2.5, alpha = 0.7, stroke=0.3) +
+  scale_color_manual(values = c("#E69F00", "#56B4E9")) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+  scale_y_continuous(limits = c(0, 50), breaks = seq(0, 50, by = 10)) +
+  labs(y = "Slides with marks [%]", x = "Groups") +
+  theme_minimal() +
+  theme(
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    legend.position = "none",
+    axis.text.x = element_text(size = label_size, colour = "black", angle = 45, vjust = 1, hjust = 1),
+    axis.text.y = element_text(size = label_size, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size= label_size, colour = "black"),
+    plot.title = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+  )
+
+# --- Boxplot 2 ---
+plot3 <- ggplot(data3, aes(x = Group, y = Percentage, fill = Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7, width = 0.5) + # Boxplot schmal beibehalten
+  geom_jitter(aes(color = Group), width = 0.2, size = 2.5, alpha = 0.7, stroke=0.3) +
+  scale_color_manual(values = c("#009E73", "#D55E00")) +
+  scale_fill_manual(values = c("#009E73", "#D55E00")) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 20)) +
+  labs(y = "Slides with marks [%]", x = "Groups") +
+  theme_minimal() +
+  theme(
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    legend.position = "none",
+    axis.text.x = element_text(size = label_size, colour = "black", angle = 45, vjust = 1, hjust = 1),
+    axis.text.y = element_text(size = label_size, colour = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size= label_size, colour = "black"),
+    plot.title = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+  )
+
+# --- Kombinierte Darstellung mit breiteren Plots ---
+combined_plot <- plot1 + plot2 + plot3 + 
+  plot_layout(ncol = 3, widths = c(2, 1, 1)) # Scatterplot und Boxplots breiter
+
+# Zeige die Plots an
+combined_plot
+
+
+ggsave(filename = paste0(fig_path, "TCGA_Marks.svg"), plot = plot1, width = 3.5, height = 3.5, bg = "transparent")
+ggsave(filename = paste0(fig_path, "Marked_Slides.svg"), plot = plot2, width = 1.75, height = 3.5, bg = "transparent")
+ggsave(filename = paste0(fig_path, "Marked_Regions.svg"), plot = plot3, width = 1.75, height = 3.5, bg = "transparent")
+
+```
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+
+# --- Scatterplot ---
+plot1 <- ggplot(data, aes(y = Percentage, x = Total)) +
+  geom_point(color = "#E69F00", size = 3) + # Adjusted point size
+  geom_text_repel(aes(label = paste(Group, sprintf("(%.1f%%)", Percentage))), 
+                  size = 4, box.padding = 0.5, point.padding = 0.3,
+                  nudge_x = 0.5, nudge_y = 2.5, segment.size = 0.3) + # Improved text positioning
+  labs(y = "Percentage with marks [%]", x = "Total slides evaluated") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_blank(),
+    axis.text = element_text(size = 12, color = "black"), # Font consistency
+    axis.title = element_text(size = 14, face = "bold")
+  )
+
+# --- Boxplot 1 ---
+plot2 <- ggplot(data2, aes(x = Group, y = Percentage, fill = Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8, width = 0.6, color = "black") + # Consistent boxplot style
+  geom_jitter(width = 0.2, size = 2, alpha = 0.5, color = "black", fill = "#E69F00", shape = 21) + # Consistent jitter style
+  scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+  scale_y_continuous(limits = c(0, 50), breaks = seq(0, 50, by = 10)) +
+  labs(y = "Percentage with marks [%]", x = "Groups") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, color = "black", angle = 45, vjust = 1, hjust = 1),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title = element_text(size = 14, face = "bold")
+  )
+
+# --- Boxplot 2 ---
+plot3 <- ggplot(data3, aes(x = Group, y = Percentage, fill = Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8, width = 0.6, color = "black") +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.5, color = "black", fill = "#009E73", shape = 21) + # Consistent jitter style
+  scale_fill_manual(values = c("#009E73", "#D55E00")) +
+  scale_y_continuous(limits = c(20, 80), breaks = seq(20, 80, by = 10)) +
+  labs(y = "Percentage with marks [%]", x = "Groups") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(size = 12, color = "black", angle = 45, vjust = 1, hjust = 1),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title = element_text(size = 14, face = "bold")
+  )
+
+# --- Combined Plot with Consistent Layout ---
+combined_plot <- plot1 + plot2 + plot3 + 
+  plot_layout(ncol = 3, widths = c(2, 1, 1)) + # Adjust plot proportions
+  plot_annotation(
+    theme = theme(
+      plot.margin = margin(10, 10, 10, 10),
+      text = element_text(size = 14)
+    )
+  )
+
+# Display the combined plot
+combined_plot
+
+```
+
+
+# _______________________________
+
